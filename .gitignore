@@ -1,0 +1,31 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyInstaller / Distribution artifacts
+build/
+dist/
+release_build/
+release_staging/
+release_assets/
+*.zip
+*.7z
+*.tar.gz
+*.tmp
+
+# Runtime logs and temporary execution dumps
+*.log
+fan_control.log
+out.txt
+
+# Editor / IDE environments
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Virtual Environments
+venv/
+.venv/
+env/

@@ -1,0 +1,37 @@
+{
+    "mode": "boost",
+    "target_temp": 65,
+    "manual_rpm": 4150,
+    "curve_points": [
+        {
+            "temp": 45,
+            "rpm": 2400
+        },
+        {
+            "temp": 55,
+            "rpm": 3000
+        },
+        {
+            "temp": 62,
+            "rpm": 3600
+        },
+        {
+            "temp": 65,
+            "rpm": 4150
+        },
+        {
+            "temp": 72,
+            "rpm": 4600
+        },
+        {
+            "temp": 80,
+            "rpm": 5000
+        }
+    ],
+    "curve_sensor": "max",
+    "safety_override": true,
+    "minimize_to_tray_on_close": true,
+    "start_minimized": false,
+    "autostart": false,
+    "poll_interval_sec": 1.5
+}
