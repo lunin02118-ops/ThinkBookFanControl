@@ -143,7 +143,13 @@ class FanControllerThread(QThread):
                     else:
                         self._filtered_cpu_temp = 0.7 * self._filtered_cpu_temp + 0.3 * float(cpu_temp)
 
-                primary_temp = self._filtered_gpu_temp
+                # Coupled dual-sensor index for shared heatpipe thermal management:
+                # Under heavy mining load, GPU target is typically 65°C, while CPU safely runs at 70-73°C.
+                # If CPU begins to heat up, normalize CPU temp with -6.0°C offset so that any CPU rise
+                # above ~71°C proactively scales fan speed BEFORE the chip ever approaches safety limits.
+                eff_cpu = (self._filtered_cpu_temp - 6.0) if self._filtered_cpu_temp is not None else 0.0
+                primary_temp = max(self._filtered_gpu_temp, eff_cpu)
+                lead_sensor = "CPU" if eff_cpu > self._filtered_gpu_temp else "GPU"
 
                 # 2. Compute Target Fan RPM based on active mode
                 target_rpm = 0
@@ -191,7 +197,7 @@ class FanControllerThread(QThread):
                     calc_rpm = int(round(self._current_stepped_rpm))
                     calc_rpm = max(2400, min(5500, calc_rpm))
                     target_rpm = calc_rpm
-                    mode_desc = f"Цель: {target:.0f}°C (Текущая: {primary_temp:.1f}°C, Δ {error:+.1f}°C) ➔ {target_rpm} RPM"
+                    mode_desc = f"Цель: {target:.0f}°C ({lead_sensor}: {primary_temp:.1f}°C, Δ {error:+.1f}°C) ➔ {target_rpm} RPM"
 
                 elif self._current_mode == "curve":
                     # Sensor selection for curve mode
@@ -221,22 +227,28 @@ class FanControllerThread(QThread):
                     target_rpm = 7500
                     mode_desc = "100% Турбо (Максимум ~7300–7700 RPM)"
 
-                # 3. Emergency Thermal Safety Protection
-                # If either chip approaches unsafe limits, automatically ramp fans
+                # 3. Emergency Thermal Safety Protection with Progressive Hysteresis
+                # Protects hardware from extreme thermal events with hysteresis to avoid oscillation
                 safety_enabled = bool(self.config.get("safety_override", True))
                 curr_g = gpu_temp if gpu_temp is not None else 0
                 curr_c = cpu_temp if cpu_temp is not None else 0
 
-                if safety_enabled and (curr_g >= 80 or curr_c >= 85):
-                    self._safety_active = True
+                if safety_enabled:
                     if curr_g >= 84 or curr_c >= 90:
+                        self._safety_active = True
                         target_rpm = 7500
                         mode_desc = f"⚠️ ЗАЩИТА (100% ТУРБО): GPU {curr_g}°C, CPU {curr_c}°C"
-                    else:
-                        target_rpm = max(target_rpm, 4900)
+                    elif curr_g >= 80 or curr_c >= 84:
+                        self._safety_active = True
+                        target_rpm = max(target_rpm, 5200)
                         mode_desc = f"⚠️ ЗАЩИТА ОТ НАГРЕВА: GPU {curr_g}°C, CPU {curr_c}°C ➔ {target_rpm} RPM"
-                else:
-                    self._safety_active = False
+                    elif self._safety_active:
+                        # Hysteresis recovery latch: remain active until temperature drops below safety threshold
+                        if curr_g <= 75 and curr_c <= 78:
+                            self._safety_active = False
+                        else:
+                            target_rpm = max(target_rpm, 4600)
+                            mode_desc = f"⚠️ ОХЛАЖДЕНИЕ ПОСЛЕ НАГРЕВА: GPU {curr_g}°C, CPU {curr_c}°C ➔ {target_rpm} RPM"
 
                 # 4. Apply Fan Command to Hardware
                 # Keep writes smooth and continuous to avoid stepped jumps

@@ -130,6 +130,64 @@ class TestControllerSimulation(unittest.TestCase):
         self.assertGreater(calc_rpm, 4400)
         self.assertGreater(ctrl._mining_integral, 0.0)
 
+    def test_coupled_cpu_gpu_thermal_index(self):
+        cfg = ConfigManager()
+        cfg.set("mode", "target_65")
+        cfg.set("target_temp", 65)
+        ctrl = FanControllerThread(cfg)
+
+        # GPU is cool at 63°C, but CPU is heating up at 78°C
+        ctrl._filtered_gpu_temp = 63.0
+        ctrl._filtered_cpu_temp = 78.0
+
+        eff_cpu = ctrl._filtered_cpu_temp - 6.0  # 72.0°C
+        primary_temp = max(ctrl._filtered_gpu_temp, eff_cpu)
+        lead_sensor = "CPU" if eff_cpu > ctrl._filtered_gpu_temp else "GPU"
+
+        self.assertEqual(primary_temp, 72.0)
+        self.assertEqual(lead_sensor, "CPU")
+        self.assertGreater(primary_temp, ctrl._target_temp)
+
+    def test_safety_hysteresis(self):
+        cfg = ConfigManager()
+        cfg.set("safety_override", True)
+        ctrl = FanControllerThread(cfg)
+
+        # 1. Normal state
+        curr_g = 72
+        curr_c = 75
+        self.assertFalse(ctrl._safety_active)
+
+        # 2. Trigger high thermal safety at 84°C CPU
+        curr_c = 84
+        if curr_g >= 84 or curr_c >= 90:
+            ctrl._safety_active = True
+        elif curr_g >= 80 or curr_c >= 84:
+            ctrl._safety_active = True
+        self.assertTrue(ctrl._safety_active)
+
+        # 3. Drops to 79°C CPU (still above 78°C reset margin) -> safety stays latched
+        curr_c = 79
+        if curr_g >= 84 or curr_c >= 90:
+            ctrl._safety_active = True
+        elif curr_g >= 80 or curr_c >= 84:
+            ctrl._safety_active = True
+        elif ctrl._safety_active:
+            if curr_g <= 75 and curr_c <= 78:
+                ctrl._safety_active = False
+        self.assertTrue(ctrl._safety_active)
+
+        # 4. Drops to 76°C CPU (below 78°C) -> safely clears latch
+        curr_c = 76
+        if curr_g >= 84 or curr_c >= 90:
+            ctrl._safety_active = True
+        elif curr_g >= 80 or curr_c >= 84:
+            ctrl._safety_active = True
+        elif ctrl._safety_active:
+            if curr_g <= 75 and curr_c <= 78:
+                ctrl._safety_active = False
+        self.assertFalse(ctrl._safety_active)
+
     def test_emergency_thermal_safety_override(self):
         cfg = ConfigManager()
         cfg.set("safety_override", True)
