@@ -41,10 +41,14 @@ class MockHardware:
         self.applied_fans.append(rpm)
         return True
 
-    def set_boost(self, state, target_rpm=7000):
+    def set_boost(self, state, target_rpm=7500):
         self.applied_boost.append(state)
         if state:
             self.applied_fans.append(target_rpm)
+        return True
+
+    def clear_boost(self):
+        self.applied_boost.append(False)
         return True
 
     def reset_to_auto(self):
@@ -139,11 +143,11 @@ class TestControllerSimulation(unittest.TestCase):
         safety_enabled = bool(cfg.get("safety_override", True))
         if safety_enabled and (curr_g >= 80 or curr_c >= 85):
             if curr_g >= 84 or curr_c >= 90:
-                target_rpm = 7000
+                target_rpm = 7500
             else:
                 target_rpm = max(target_rpm, 4900)
 
-        self.assertEqual(target_rpm, 7000)
+        self.assertEqual(target_rpm, 7500)
 
     def test_turbo_boost_mode(self):
         cfg = ConfigManager()
@@ -155,8 +159,8 @@ class TestControllerSimulation(unittest.TestCase):
         ctrl.set_mode("boost")
         self.assertEqual(ctrl._current_mode, "boost")
         self.assertTrue(ctrl._force_apply)
-        # In boost mode, target_rpm is 7000 and set_boost(True, target_rpm) is dispatched
-        target_rpm = 7000
+        # In boost mode, target_rpm is 7500 and set_boost(True, target_rpm) is dispatched
+        target_rpm = 7500
         ctrl.wmi.set_boost(True, target_rpm)
         self.assertIn(True, mock_wmi.applied_boost)
 
@@ -169,7 +173,8 @@ class TestControllerSimulation(unittest.TestCase):
         # 1. Enter boost mode
         ctrl._current_mode = "boost"
         ctrl._last_applied_mode = "boost"
-        ctrl._last_applied_rpm = 7000
+        ctrl._last_applied_rpm = 7500
+        ctrl._boost_active_in_hw = True
 
         # 2. Switch to manual mode
         ctrl.set_mode("manual")
@@ -177,11 +182,12 @@ class TestControllerSimulation(unittest.TestCase):
         self.assertEqual(ctrl._last_applied_mode, "boost")
         self.assertTrue(ctrl._force_apply)
 
-        # 3. Simulate controller application logic
+        # 3. Controller application logic when transitioning away from boost
         prev_mode = ctrl._last_applied_mode
         ctrl._last_applied_mode = ctrl._current_mode
-        if prev_mode == "boost":
-            ctrl.wmi.set_boost(False)
+        if ctrl._boost_active_in_hw or prev_mode == "boost":
+            ctrl.wmi.clear_boost()
+            ctrl._boost_active_in_hw = False
         ctrl.wmi.set_both_fans(3500)
 
         self.assertIn(False, mock_wmi.applied_boost)

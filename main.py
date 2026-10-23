@@ -62,7 +62,35 @@ def signal_handler(signum, frame):
 IPC_SERVER_NAME = "ThinkBookFanControl_IPC_2026"
 
 
+def is_admin() -> bool:
+    """Returns True if the current process has Windows Administrator privileges."""
+    try:
+        import ctypes
+        return ctypes.windll.shell32.IsUserAnAdmin() != 0
+    except Exception:
+        return False
+
+
 def main():
+    # 0. Administrator Privileges Check & Self-Elevation
+    if not is_admin():
+        logger.info("Non-elevated launch detected. Requesting UAC elevation...")
+        import ctypes
+        try:
+            if getattr(sys, "frozen", False):
+                exe = sys.executable
+                params = " ".join([f'"{arg}"' for arg in sys.argv[1:]])
+            else:
+                exe = sys.executable
+                params = f'"{os.path.abspath(__file__)}" ' + " ".join([f'"{arg}"' for arg in sys.argv[1:]])
+            ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", exe, params, APP_DIR, 1)
+            if ret > 32:
+                sys.exit(0)
+            else:
+                logger.warning(f"UAC elevation declined or failed with code {ret}")
+        except Exception as e:
+            logger.error(f"Failed to elevate process: {e}")
+
     # 1. Single Instance Check via Windows Mutex
     mutex_name = "Local\\ThinkBookFanControlMutex_2026"
     mutex = win32event.CreateMutex(None, False, mutex_name)
@@ -118,7 +146,7 @@ def main():
 
     ipc_server.newConnection.connect(handle_ipc_connection)
 
-    if config.get("start_minimized", False):
+    if config.get("start_minimized", False) or "--minimized" in sys.argv:
         window.hide()
     else:
         window.show()

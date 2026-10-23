@@ -69,6 +69,8 @@ class TestConfigManager(unittest.TestCase):
     def setUp(self):
         self.temp_file = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
         self.temp_file.close()
+        if os.path.exists(self.temp_file.name):
+            os.remove(self.temp_file.name)
 
     def tearDown(self):
         if os.path.exists(self.temp_file.name):
@@ -166,6 +168,8 @@ class TestMainWindowSync(unittest.TestCase):
         app = QApplication.instance() or QApplication([])
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tf:
             cfg_path = tf.name
+        if os.path.exists(cfg_path):
+            os.remove(cfg_path)
 
         try:
             cfg = ConfigManager(file_path=cfg_path)

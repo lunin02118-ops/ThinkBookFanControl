@@ -33,6 +33,7 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=['app_icon.ico'],
+    uac_admin=True,
 )
 coll = COLLECT(
     exe,

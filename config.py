@@ -113,32 +113,64 @@ class ConfigManager:
         self.save()
 
     def set_autostart(self, enable: bool) -> bool:
-        """Configures Windows registry HKCU Run key for autostart on boot."""
+        """Configures Windows autostart on logon via Scheduled Task (highest privileges) and Registry Run key."""
+        import subprocess
+
+        task_name = "ThinkBookFanControl"
+        if getattr(sys, "frozen", False):
+            target = f'"{sys.executable}" --minimized'
+        else:
+            main_py = os.path.join(get_app_dir(), "main.py")
+            target = f'"{sys.executable}" "{main_py}" --minimized'
+
         try:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_REG_KEY, 0, winreg.KEY_SET_VALUE) as key:
-                if enable:
-                    exe_path = sys.executable
-                    if not getattr(sys, "frozen", False):
-                        main_py = os.path.join(get_app_dir(), "main.py")
-                        cmd = f'"{exe_path}" "{main_py}"'
-                    else:
-                        cmd = f'"{exe_path}"'
-                    winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, cmd)
-                else:
-                    try:
+            if enable:
+                # 1. Scheduled Task for elevated launch on logon without UAC block
+                subprocess.run(
+                    ["schtasks", "/Create", "/TN", task_name, "/TR", target, "/SC", "ONLOGON", "/RL", "HIGHEST", "/F"],
+                    capture_output=True,
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0,
+                )
+                # 2. Auxiliary Registry Run key
+                try:
+                    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_REG_KEY, 0, winreg.KEY_SET_VALUE) as key:
+                        winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, target)
+                except Exception:
+                    pass
+            else:
+                subprocess.run(
+                    ["schtasks", "/Delete", "/TN", task_name, "/F"],
+                    capture_output=True,
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0,
+                )
+                try:
+                    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_REG_KEY, 0, winreg.KEY_SET_VALUE) as key:
                         winreg.DeleteValue(key, APP_NAME)
-                    except FileNotFoundError:
-                        pass
+                except Exception:
+                    pass
+
             self.set("autostart", bool(enable))
             return True
         except Exception as e:
-            logger.error(f"Failed to set autostart in registry: {e}")
+            logger.error(f"Failed to configure autostart: {e}")
             return False
 
     def is_autostart_enabled(self) -> bool:
+        import subprocess
+        task_name = "ThinkBookFanControl"
+        try:
+            res = subprocess.run(
+                ["schtasks", "/Query", "/TN", task_name],
+                capture_output=True,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0,
+            )
+            if res.returncode == 0:
+                return True
+        except Exception:
+            pass
         try:
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_REG_KEY, 0, winreg.KEY_READ) as key:
                 val, _ = winreg.QueryValueEx(key, APP_NAME)
                 return bool(val)
         except Exception:
-            return False
+            return bool(self.get("autostart", False))

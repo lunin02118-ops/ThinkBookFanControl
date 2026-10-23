@@ -133,13 +133,18 @@ class LenovoWmiHardware:
 
     def set_boost(self, enable: bool, target_rpm: int = 7500) -> bool:
         """Toggles full fan boost.
-        Dispatches maximum target RPM (7500 RPM) to both fans,
+        Dispatches maximum target RPM (7500 RPM) to both fans and sets boost flag,
         ensuring full physical speed (~7300–7700 RPM) across all EC firmware variants.
         """
         if enable:
+            self.set_feature(ID_FAN_BOOST, 1)
             return self.set_both_fans(target_rpm)
         else:
             return self.reset_to_auto()
+
+    def clear_boost(self) -> bool:
+        """Clears boost feature flag (0x04020000) in EC."""
+        return self.set_feature(ID_FAN_BOOST, 0)
 
     def reset_to_auto(self) -> bool:
         """Restores default EC / BIOS automatic fan control."""

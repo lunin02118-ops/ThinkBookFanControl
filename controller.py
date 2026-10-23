@@ -63,6 +63,7 @@ class FanControllerThread(QThread):
         self._mining_integral = 0.0
         self._current_stepped_rpm = 4150.0
         self._safety_active = False
+        self._boost_active_in_hw = False
 
     def set_mode(self, mode: str):
         """Switches active control mode: 'target_65', 'curve', 'manual', 'auto', 'boost'."""
@@ -236,10 +237,15 @@ class FanControllerThread(QThread):
 
                     if is_boost:
                         self.wmi.set_boost(True, target_rpm)
-                    elif self._current_mode == "auto" and not self._safety_active:
-                        self.wmi.reset_to_auto()
+                        self._boost_active_in_hw = True
                     else:
-                        self.wmi.set_both_fans(target_rpm)
+                        if self._boost_active_in_hw or prev_mode == "boost":
+                            self.wmi.clear_boost()
+                            self._boost_active_in_hw = False
+                        if self._current_mode == "auto" and not self._safety_active:
+                            self.wmi.reset_to_auto()
+                        else:
+                            self.wmi.set_both_fans(target_rpm)
 
                 # 4. Emit Telemetry to GUI
                 telemetry_data = {
