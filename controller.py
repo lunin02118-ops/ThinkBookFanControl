@@ -60,8 +60,10 @@ class FanControllerThread(QThread):
         self._force_apply = True
         self._filtered_gpu_temp = None
         self._filtered_cpu_temp = None
+        self._prev_primary_temp = None
         self._mining_integral = 0.0
-        self._current_stepped_rpm = 4150.0
+        init_target = float(self.config.get("target_temp", 68))
+        self._current_stepped_rpm = max(2600.0, min(5000.0, 4000.0 - (init_target - 65.0) * 235.0))
         self._safety_active = False
         self._boost_active_in_hw = False
 
@@ -71,6 +73,9 @@ class FanControllerThread(QThread):
         self.config.set("mode", mode)
         # Reset integral when switching modes
         self._mining_integral = 0.0
+        self._prev_primary_temp = None
+        if mode == "target_65":
+            self._current_stepped_rpm = max(2600.0, min(5000.0, 4000.0 - (self._target_temp - 65.0) * 235.0))
         # Force immediate re-application while preserving prev_mode
         self._force_apply = True
 
@@ -78,6 +83,9 @@ class FanControllerThread(QThread):
         self._target_temp = float(temp)
         self.config.set("target_temp", self._target_temp)
         self._mining_integral = 0.0
+        self._prev_primary_temp = None
+        self._current_stepped_rpm = max(2600.0, min(5000.0, 4000.0 - (self._target_temp - 65.0) * 235.0))
+        self._force_apply = True
 
     def set_manual_rpm(self, rpm: int):
         self._manual_rpm = int(rpm)
@@ -142,30 +150,46 @@ class FanControllerThread(QThread):
                 mode_desc = ""
 
                 if self._current_mode == "target_65":
-                    # Closed-loop PI regulation for optimal mining temperature
+                    # Closed-loop PID regulation with damping and dynamic baseline
                     target = self._target_temp
                     error = primary_temp - target
 
-                    # Deadband of ±0.35°C to avoid acoustic fan hunting
-                    effective_error = 0.0 if abs(error) < 0.35 else error
+                    # 1. Dynamic baseline calibrated to target temperature
+                    # 60°C -> ~4800 RPM, 65°C -> ~4000 RPM, 68°C -> ~3300 RPM, 72°C -> ~2800 RPM
+                    baseline = max(2600.0, min(5000.0, 4000.0 - (target - 65.0) * 235.0))
 
-                    # Integral term with anti-windup (accumulates steady-state offset)
-                    self._mining_integral += effective_error * 8.0 * dt
-                    self._mining_integral = max(-450.0, min(450.0, self._mining_integral))
+                    # 2. Deadband of ±0.65°C: inside deadband, hold steady to prevent fan hunting
+                    if abs(error) < 0.65:
+                        effective_error = 0.0
+                    else:
+                        effective_error = error - (0.65 if error > 0 else -0.65)
 
-                    # Proportional + Integral + Baseline (4150 RPM)
-                    raw_target = 4150.0 + (effective_error * 120.0) + self._mining_integral
+                    # 3. Derivative term (d_temp/dt) on measurement to anticipate and eliminate overshoot
+                    if self._prev_primary_temp is None:
+                        d_temp = 0.0
+                    else:
+                        d_temp = (primary_temp - self._prev_primary_temp) / dt
+                    self._prev_primary_temp = primary_temp
 
-                    # Slew-rate limiting: smooth ramp max ±80 RPM per second
-                    max_step = 80.0 * dt
+                    # 4. Integral term with anti-windup (accumulates steady-state offset smoothly)
+                    self._mining_integral += effective_error * 3.5 * dt
+                    self._mining_integral = max(-500.0, min(600.0, self._mining_integral))
+
+                    # 5. PID Calculation: Baseline + Proportional + Integral + Derivative damping
+                    kd = 40.0
+                    raw_target = baseline + (effective_error * 95.0) + self._mining_integral + (d_temp * kd)
+
+                    # 6. Smooth slew-rate limiting: max ±35 RPM per second (smooth acoustic glide, no abrupt steps)
+                    max_step = 35.0 * dt
                     diff = raw_target - self._current_stepped_rpm
                     if abs(diff) > max_step:
                         self._current_stepped_rpm += max_step if diff > 0 else -max_step
                     else:
                         self._current_stepped_rpm = raw_target
 
-                    calc_rpm = int(round(self._current_stepped_rpm / 25.0) * 25)
-                    calc_rpm = max(2600, min(5100, calc_rpm))
+                    # 7. Clamp within safe range without harsh 25-RPM quantization
+                    calc_rpm = int(round(self._current_stepped_rpm))
+                    calc_rpm = max(2400, min(5500, calc_rpm))
                     target_rpm = calc_rpm
                     mode_desc = f"Цель: {target:.0f}°C (Текущая: {primary_temp:.1f}°C, Δ {error:+.1f}°C) ➔ {target_rpm} RPM"
 
@@ -215,7 +239,7 @@ class FanControllerThread(QThread):
                     self._safety_active = False
 
                 # 4. Apply Fan Command to Hardware
-                # In boost mode, keep refreshing every tick to prevent Lenovo EC watchdog decay!
+                # Keep writes smooth and continuous to avoid stepped jumps
                 apply_counter += 1
                 rpm_diff = abs(target_rpm - (self._last_applied_rpm or 0))
                 is_boost = (self._current_mode == "boost" or (self._safety_active and target_rpm >= 5400))
@@ -224,8 +248,8 @@ class FanControllerThread(QThread):
                     getattr(self, "_force_apply", False)
                     or self._current_mode != self._last_applied_mode
                     or is_boost
-                    or rpm_diff >= 40
-                    or apply_counter >= 3
+                    or rpm_diff >= 15
+                    or apply_counter >= 2
                 )
 
                 if should_apply:

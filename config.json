@@ -1,7 +1,7 @@
 {
     "mode": "boost",
     "target_temp": 65,
-    "manual_rpm": 4150,
+    "manual_rpm": 3200,
     "curve_points": [
         {
             "temp": 45,
@@ -9,19 +9,19 @@
         },
         {
             "temp": 55,
-            "rpm": 3000
+            "rpm": 2800
         },
         {
             "temp": 62,
-            "rpm": 3600
+            "rpm": 3100
         },
         {
-            "temp": 65,
-            "rpm": 4150
+            "temp": 68,
+            "rpm": 3400
         },
         {
-            "temp": 72,
-            "rpm": 4600
+            "temp": 75,
+            "rpm": 4200
         },
         {
             "temp": 80,
