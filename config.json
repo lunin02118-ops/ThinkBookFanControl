@@ -1,11 +1,11 @@
 {
     "mode": "target_65",
-    "target_temp": 65,
-    "manual_rpm": 3200,
+    "target_temp": 65.0,
+    "manual_rpm": 3600,
     "curve_points": [
         {
             "temp": 45,
-            "rpm": 2400
+            "rpm": 2200
         },
         {
             "temp": 55,
@@ -13,25 +13,25 @@
         },
         {
             "temp": 62,
-            "rpm": 3100
-        },
-        {
-            "temp": 68,
             "rpm": 3400
         },
         {
-            "temp": 75,
-            "rpm": 4200
+            "temp": 68,
+            "rpm": 4000
         },
         {
-            "temp": 80,
-            "rpm": 5000
+            "temp": 75,
+            "rpm": 4800
+        },
+        {
+            "temp": 82,
+            "rpm": 5600
         }
     ],
     "curve_sensor": "max",
     "safety_override": true,
     "minimize_to_tray_on_close": true,
     "start_minimized": false,
-    "autostart": false,
-    "poll_interval_sec": 1.5
+    "autostart": true,
+    "poll_interval_sec": 1.0
 }

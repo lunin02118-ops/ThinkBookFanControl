@@ -3,8 +3,8 @@ Interactive Fan Curve Widget for PySide6
 Provides:
 - Visual plotting of temperature vs RPM
 - Gradient fill under curve
-- Draggable points for real-time visual adjustment
-- Live operating point marker (showing current GPU temp and fan RPM)
+- Draggable points for real-time visual adjustment (deep-copied, zero preset mutation)
+- Live operating point marker (showing active curve sensor temp and fan RPM)
 - Double click to add point, right click to delete point
 """
 
@@ -16,16 +16,18 @@ from PySide6.QtGui import (
     QBrush,
     QLinearGradient,
     QFont,
-    QPolygonF,
     QPainterPath,
 )
 from PySide6.QtCore import Qt, QPointF, Signal
+
+from config import DEFAULT_CURVE, clone_curve_points
 
 
 class InteractiveCurveWidget(QWidget):
     """Custom graphical widget displaying and editing fan curve."""
 
     curve_changed = Signal(list)
+    curve_edit_finished = Signal(list)
 
     TEMP_MIN = 30.0
     TEMP_MAX = 90.0
@@ -37,14 +39,8 @@ class InteractiveCurveWidget(QWidget):
         self.setMinimumSize(480, 260)
         self.setMouseTracking(True)
 
-        self.points = [
-            {"temp": 45, "rpm": 2400},
-            {"temp": 55, "rpm": 3000},
-            {"temp": 62, "rpm": 3600},
-            {"temp": 65, "rpm": 4150},
-            {"temp": 72, "rpm": 4600},
-            {"temp": 80, "rpm": 5000},
-        ]
+        self.points = clone_curve_points(DEFAULT_CURVE)
+        self.target_indicator_temp = 65.0
 
         self.drag_index = None
         self.hover_index = None
@@ -61,11 +57,15 @@ class InteractiveCurveWidget(QWidget):
         self.margin_bottom = 45
 
     def set_points(self, points: list[dict]):
-        self.points = sorted(points, key=lambda p: p["temp"])
+        self.points = clone_curve_points(points)
         self.update()
 
     def get_points(self) -> list[dict]:
-        return list(self.points)
+        return clone_curve_points(self.points)
+
+    def set_target_indicator(self, temp: float):
+        self.target_indicator_temp = float(temp)
+        self.update()
 
     def set_live_point(self, temp: float | None, rpm: float | None):
         if self.live_temp != temp or self.live_rpm != rpm:
@@ -73,7 +73,6 @@ class InteractiveCurveWidget(QWidget):
             self.live_rpm = rpm
             self.update()
 
-    # Coordinate conversions
     def _plot_rect(self):
         w = self.width() - self.margin_left - self.margin_right
         h = self.height() - self.margin_top - self.margin_bottom
@@ -81,8 +80,8 @@ class InteractiveCurveWidget(QWidget):
 
     def _val_to_pixel(self, temp: float, rpm: float) -> QPointF:
         x0, y0, w, h = self._plot_rect()
-        nx = (temp - self.TEMP_MIN) / (self.TEMP_MAX - self.TEMP_MIN)
-        ny = (rpm - self.RPM_MIN) / (self.RPM_MAX - self.RPM_MIN)
+        nx = max(0.0, min(1.0, (temp - self.TEMP_MIN) / (self.TEMP_MAX - self.TEMP_MIN)))
+        ny = max(0.0, min(1.0, (rpm - self.RPM_MIN) / (self.RPM_MAX - self.RPM_MIN)))
         px = x0 + nx * w
         py = y0 + (1.0 - ny) * h
         return QPointF(px, py)
@@ -110,17 +109,15 @@ class InteractiveCurveWidget(QWidget):
         font_axis_bold = QFont("Segoe UI", 9, QFont.Bold)
         painter.setFont(font_axis)
 
-        # Horizontal RPM lines (2000 to 5000 every 500)
         pen_grid = QPen(QColor(50, 56, 75, 160), 1, Qt.DashLine)
         pen_axis = QPen(QColor(90, 100, 130), 1)
 
-        painter.setPen(pen_grid)
-        for rpm_val in range(2000, 7500, 500):
+        # Horizontal RPM lines (2000 to 7500 inclusive every 500)
+        for rpm_val in range(2000, 7501, 500):
             p = self._val_to_pixel(self.TEMP_MIN, rpm_val)
             painter.setPen(pen_grid)
             painter.drawLine(int(x0), int(p.y()), int(x0 + w), int(p.y()))
 
-            # Y-axis label
             painter.setPen(QColor(160, 175, 200))
             painter.drawText(
                 5,
@@ -131,13 +128,12 @@ class InteractiveCurveWidget(QWidget):
                 f"{rpm_val}",
             )
 
-        # Vertical Temp lines (30 to 90 every 10)
-        for temp_val in range(30, 100, 10):
+        # Vertical Temp lines (30 to 90 inclusive every 10)
+        for temp_val in range(30, 91, 10):
             p = self._val_to_pixel(temp_val, self.RPM_MIN)
             painter.setPen(pen_grid)
             painter.drawLine(int(p.x()), int(y0), int(p.x()), int(y0 + h))
 
-            # X-axis label
             painter.setPen(QColor(160, 175, 200))
             painter.drawText(
                 int(p.x() - 25),
@@ -148,15 +144,15 @@ class InteractiveCurveWidget(QWidget):
                 f"{temp_val}°C",
             )
 
-        # Plot Border
         painter.setPen(pen_axis)
         painter.drawRect(int(x0), int(y0), int(w), int(h))
 
-        # 3. Target 65°C Indicator band
-        p65_top = self._val_to_pixel(65, self.RPM_MAX)
-        p65_bot = self._val_to_pixel(65, self.RPM_MIN)
+        # 3. Target Indicator Band
+        t_ind = max(self.TEMP_MIN, min(self.TEMP_MAX, self.target_indicator_temp))
+        pt_top = self._val_to_pixel(t_ind, self.RPM_MAX)
+        pt_bot = self._val_to_pixel(t_ind, self.RPM_MIN)
         painter.setPen(QPen(QColor(255, 193, 7, 70), 2, Qt.DotLine))
-        painter.drawLine(int(p65_top.x()), int(p65_top.y()), int(p65_bot.x()), int(p65_bot.y()))
+        painter.drawLine(int(pt_top.x()), int(pt_top.y()), int(pt_bot.x()), int(pt_bot.y()))
 
         # 4. Fill Area Under Curve
         if self.points:
@@ -196,7 +192,6 @@ class InteractiveCurveWidget(QWidget):
             is_hover = (i == self.hover_index) or (i == self.drag_index)
             radius = 7 if is_hover else 5
 
-            # Glow effect
             if is_hover:
                 painter.setPen(Qt.NoPen)
                 painter.setBrush(QColor(72, 202, 228, 80))
@@ -206,16 +201,14 @@ class InteractiveCurveWidget(QWidget):
             painter.setBrush(QColor("#0096c7" if not is_hover else "#48cae4"))
             painter.drawEllipse(pix, radius, radius)
 
-        # 7. Draw Live Telemetry Point (Current operating condition)
+        # 7. Draw Live Telemetry Point
         if self.live_temp is not None and self.live_rpm is not None:
             live_pix = self._val_to_pixel(self.live_temp, self.live_rpm)
 
-            # Crosshairs
             painter.setPen(QPen(QColor(76, 201, 240, 120), 1, Qt.DashLine))
             painter.drawLine(int(x0), int(live_pix.y()), int(x0 + w), int(live_pix.y()))
             painter.drawLine(int(live_pix.x()), int(y0), int(live_pix.x()), int(y0 + h))
 
-            # Glowing live marker
             painter.setPen(Qt.NoPen)
             painter.setBrush(QColor(56, 176, 0, 120))
             painter.drawEllipse(live_pix, 10, 10)
@@ -224,15 +217,13 @@ class InteractiveCurveWidget(QWidget):
             painter.setBrush(QColor("#38b000"))
             painter.drawEllipse(live_pix, 6, 6)
 
-            # Small live badge
-            badge_text = f"Текущий: {self.live_temp:.0f}°C @ {self.live_rpm} RPM"
+            badge_text = f"Рабочая точка: {self.live_temp:.1f}°C @ {int(self.live_rpm)} RPM"
             painter.setFont(font_axis_bold)
             painter.setPen(QColor("#38b000"))
             painter.drawText(int(x0 + 10), int(y0 + 20), badge_text)
 
         painter.end()
 
-    # Mouse Interaction for point dragging
     def _find_point_near(self, pos: QPointF, max_dist=14.0) -> int | None:
         for i, pt in enumerate(self.points):
             pix = self._val_to_pixel(pt["temp"], pt["rpm"])
@@ -248,22 +239,24 @@ class InteractiveCurveWidget(QWidget):
                 self.drag_index = idx
                 self.update()
         elif event.button() == Qt.RightButton:
-            # Delete point if more than 2 points remain
             idx = self._find_point_near(event.position())
             if idx is not None and len(self.points) > 2:
                 self.points.pop(idx)
-                self.curve_changed.emit(self.points)
+                pts = self.get_points()
+                self.curve_changed.emit(pts)
+                self.curve_edit_finished.emit(pts)
                 self.update()
 
     def add_point_smart(self):
-        """Adds a new control point at the largest interval."""
+        """Adds a new control point at the largest temperature interval."""
         if not self.points:
-            self.points = [{"temp": 45, "rpm": 2500}, {"temp": 75, "rpm": 4500}]
+            self.points = [{"temp": 45, "rpm": 2400}, {"temp": 75, "rpm": 4800}]
+            pts = self.get_points()
             self.update()
-            self.curve_changed.emit(self.points)
+            self.curve_changed.emit(pts)
+            self.curve_edit_finished.emit(pts)
             return
 
-        # Find largest gap
         max_gap = 0
         insert_idx = 0
         for i in range(len(self.points) - 1):
@@ -283,22 +276,22 @@ class InteractiveCurveWidget(QWidget):
             if self.points[-1]["temp"] < 88:
                 self.points.append({"temp": min(90, self.points[-1]["temp"] + 5), "rpm": 7500})
             elif self.points[0]["temp"] > 35:
-                self.points.insert(0, {"temp": max(30, self.points[0]["temp"] - 5), "rpm": 2200})
+                self.points.insert(0, {"temp": max(30, self.points[0]["temp"] - 5), "rpm": 2100})
+        pts = self.get_points()
         self.update()
-        self.curve_changed.emit(self.points)
+        self.curve_changed.emit(pts)
+        self.curve_edit_finished.emit(pts)
 
     def mouseMoveEvent(self, event):
         pos = event.position()
         if self.drag_index is not None:
             temp, rpm = self._pixel_to_val(pos.x(), pos.y())
-            # Clamp point boundaries relative to neighbors
             temp_min_bound = self.TEMP_MIN if self.drag_index == 0 else self.points[self.drag_index - 1]["temp"] + 1
             temp_max_bound = self.TEMP_MAX if self.drag_index == len(self.points) - 1 else self.points[self.drag_index + 1]["temp"] - 1
             if temp_min_bound > temp_max_bound:
                 temp_min_bound = temp_max_bound
 
             clamped_temp = int(round(max(temp_min_bound, min(temp_max_bound, temp))))
-            # Round RPM to nearest 50
             clamped_rpm = int(round(max(self.RPM_MIN, min(self.RPM_MAX, rpm)) / 50.0) * 50)
 
             self.points[self.drag_index]["temp"] = clamped_temp
@@ -310,7 +303,7 @@ class InteractiveCurveWidget(QWidget):
                 QToolTip.showText(event.globalPosition().toPoint(), tip_text, self)
 
             self.update()
-            self.curve_changed.emit(self.points)
+            self.curve_changed.emit(self.get_points())
         else:
             near_idx = self._find_point_near(pos)
             if near_idx != self.hover_index:
@@ -328,11 +321,12 @@ class InteractiveCurveWidget(QWidget):
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton and self.drag_index is not None:
             self.drag_index = None
+            pts = self.get_points()
             self.update()
-            self.curve_changed.emit(self.points)
+            self.curve_changed.emit(pts)
+            self.curve_edit_finished.emit(pts)
 
     def mouseDoubleClickEvent(self, event):
-        # Double click to add or update point
         if event.button() == Qt.LeftButton:
             x0, y0, w, h = self._plot_rect()
             pos = event.position()
@@ -341,15 +335,18 @@ class InteractiveCurveWidget(QWidget):
                 t_int = int(round(temp))
                 r_int = int(round(rpm / 50.0) * 50)
 
-                # Check if close to existing point
                 for pt in self.points:
                     if abs(pt["temp"] - t_int) <= 2:
                         pt["rpm"] = r_int
+                        pts = self.get_points()
                         self.update()
-                        self.curve_changed.emit(self.points)
+                        self.curve_changed.emit(pts)
+                        self.curve_edit_finished.emit(pts)
                         return
 
                 self.points.append({"temp": t_int, "rpm": r_int})
                 self.points.sort(key=lambda p: p["temp"])
+                pts = self.get_points()
                 self.update()
-                self.curve_changed.emit(self.points)
+                self.curve_changed.emit(pts)
+                self.curve_edit_finished.emit(pts)

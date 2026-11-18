@@ -16,8 +16,16 @@ release_assets/
 
 # Runtime logs and temporary execution dumps
 *.log
+*.log.old
 fan_control.log
 out.txt
+current_status.json
+self_test_result.json
+
+# Rust & C# build directories
+rust_app/target/
+sensor_helper/bin/
+sensor_helper/obj/
 
 # Editor / IDE environments
 .idea/
